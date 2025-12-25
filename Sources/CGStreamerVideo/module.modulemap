@@ -1,0 +1,5 @@
+module CGStreamerVideo [system] {
+    header "gstreamer_video.h"
+    link "gstvideo-1.0"
+    export *
+}

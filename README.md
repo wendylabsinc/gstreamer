@@ -1,0 +1,200 @@
+# GStreamer
+
+[![Swift 6.2](https://img.shields.io/badge/Swift-6.2-orange.svg)](https://swift.org)
+[![Platforms](https://img.shields.io/badge/Platforms-macOS%20|%20iOS%20|%20tvOS%20|%20watchOS%20|%20visionOS%20|%20Linux-blue.svg)](https://swift.org)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+A modern Swift 6.2 wrapper for GStreamer, designed for robotics and computer vision applications.
+
+## Features
+
+- Swift Concurrency support with `AsyncStream` for bus messages and video frames
+- Safe buffer access via `RawSpan` - memory views cannot escape their scope
+- Clean, ergonomic API with minimal boilerplate
+- Full `Sendable` conformance for safe concurrent access
+- Cross-platform: macOS, iOS, tvOS, watchOS, visionOS, and Linux
+
+## Requirements
+
+- Swift 6.2+
+- GStreamer 1.20+ installed on your system
+
+### Installing GStreamer
+
+**macOS (Homebrew):**
+```bash
+brew install gstreamer
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt install libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+```
+
+## Installation
+
+Add the package to your `Package.swift`:
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/wendylabsinc/gstreamer.git", from: "1.0.0")
+]
+```
+
+Then add `GStreamer` to your target dependencies:
+
+```swift
+.target(
+    name: "YourTarget",
+    dependencies: ["GStreamer"]
+)
+```
+
+## Usage
+
+### Basic Pipeline
+
+```swift
+import GStreamer
+
+// Initialize GStreamer (once per process)
+try GStreamer.initialize()
+
+// Create and run a pipeline
+let pipeline = try Pipeline("videotestsrc num-buffers=100 ! autovideosink")
+try pipeline.play()
+
+// Listen for bus messages
+for await message in pipeline.bus.messages(filter: [.eos, .error]) {
+    switch message {
+    case .eos:
+        print("End of stream")
+    case .error(let message, let debug):
+        print("Error: \(message)")
+    default:
+        break
+    }
+}
+
+pipeline.stop()
+```
+
+### Pulling Video Frames
+
+```swift
+import GStreamer
+
+try GStreamer.initialize()
+
+let pipeline = try Pipeline("""
+    videotestsrc num-buffers=10 ! \
+    video/x-raw,format=BGRA,width=640,height=480 ! \
+    appsink name=sink
+    """)
+
+let sink = try AppSink(pipeline: pipeline, name: "sink")
+try pipeline.play()
+
+// Process frames using AsyncStream
+for await frame in sink.frames() {
+    print("Frame: \(frame.width)x\(frame.height) \(frame.format.formatString)")
+
+    // Safe buffer access - RawSpan cannot escape this closure
+    try frame.withMappedBytes { span in
+        span.withUnsafeBytes { buffer in
+            // Process pixel data...
+            let firstPixel = Array(buffer.prefix(4)) // BGRA
+            print("First pixel: \(firstPixel)")
+        }
+    }
+}
+
+pipeline.stop()
+```
+
+### Setting Element Properties
+
+```swift
+let pipeline = try Pipeline("videotestsrc name=src ! autovideosink")
+
+if let src = pipeline.element(named: "src") {
+    src.set("pattern", 0)        // Int property
+    src.set("is-live", true)     // Bool property
+    src.set("name", "my-source") // String property
+}
+```
+
+### Working with Caps
+
+```swift
+let caps = try Caps("video/x-raw,format=BGRA,width=1920,height=1080,framerate=30/1")
+print(caps.description)
+```
+
+## API Reference
+
+### GStreamer
+
+```swift
+public enum GStreamer {
+    static func initialize(_ config: Configuration = .init()) throws
+    static var versionString: String { get }
+    static var isInitialized: Bool { get }
+}
+```
+
+### Pipeline
+
+```swift
+public final class Pipeline: @unchecked Sendable {
+    init(_ description: String) throws
+    func play() throws
+    func pause() throws
+    func stop()
+    func setState(_ state: State) throws
+    func currentState() -> State
+    var bus: Bus { get }
+    func element(named name: String) -> Element?
+    func appSink(named name: String) throws -> AppSink
+}
+```
+
+### Bus & Messages
+
+```swift
+public enum BusMessage: Sendable {
+    case eos
+    case error(message: String, debug: String?)
+    case warning(message: String, debug: String?)
+    case stateChanged(old: Pipeline.State, new: Pipeline.State)
+    case element(name: String, fields: [String: String])
+}
+
+public final class Bus: @unchecked Sendable {
+    func messages(filter: Filter = [.error, .eos, .stateChanged]) -> AsyncStream<BusMessage>
+}
+```
+
+### AppSink & VideoFrame
+
+```swift
+public final class AppSink: @unchecked Sendable {
+    init(pipeline: Pipeline, name: String) throws
+    func frames() -> AsyncStream<VideoFrame>
+}
+
+public struct VideoFrame: @unchecked Sendable {
+    let width: Int
+    let height: Int
+    let format: PixelFormat
+    func withMappedBytes<R>(_ body: (RawSpan) throws -> R) throws -> R
+}
+
+public enum PixelFormat: Sendable, Equatable {
+    case bgra, rgba, nv12, i420, gray8, unknown(String)
+}
+```
+
+## License
+
+MIT License. See [LICENSE](LICENSE) for details.
