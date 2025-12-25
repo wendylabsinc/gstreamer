@@ -101,3 +101,69 @@ GstBuffer* swift_gst_buffer_new_allocate(gsize size) {
 gsize swift_gst_buffer_fill(GstBuffer* buffer, gsize offset, gconstpointer src, gsize size) {
     return gst_buffer_fill(buffer, offset, src, size);
 }
+
+// MARK: - Buffer Timestamps
+
+GstClockTime swift_gst_buffer_get_pts(GstBuffer* buffer) {
+    return GST_BUFFER_PTS(buffer);
+}
+
+GstClockTime swift_gst_buffer_get_dts(GstBuffer* buffer) {
+    return GST_BUFFER_DTS(buffer);
+}
+
+GstClockTime swift_gst_buffer_get_duration(GstBuffer* buffer) {
+    return GST_BUFFER_DURATION(buffer);
+}
+
+void swift_gst_buffer_set_pts(GstBuffer* buffer, GstClockTime pts) {
+    GST_BUFFER_PTS(buffer) = pts;
+}
+
+void swift_gst_buffer_set_dts(GstBuffer* buffer, GstClockTime dts) {
+    GST_BUFFER_DTS(buffer) = dts;
+}
+
+void swift_gst_buffer_set_duration(GstBuffer* buffer, GstClockTime duration) {
+    GST_BUFFER_DURATION(buffer) = duration;
+}
+
+gboolean swift_gst_clock_time_is_valid(GstClockTime time) {
+    return GST_CLOCK_TIME_IS_VALID(time);
+}
+
+GstClockTime swift_gst_clock_time_none(void) {
+    return GST_CLOCK_TIME_NONE;
+}
+
+GstClockTime swift_gst_second(void) {
+    return GST_SECOND;
+}
+
+// MARK: - AppSrc additional functions
+
+void swift_gst_app_src_set_format(GstAppSrc* appsrc, GstFormat format) {
+    g_object_set(G_OBJECT(appsrc), "format", format, NULL);
+}
+
+void swift_gst_app_src_set_is_live(GstAppSrc* appsrc, gboolean is_live) {
+    g_object_set(G_OBJECT(appsrc), "is-live", is_live, NULL);
+}
+
+void swift_gst_app_src_set_max_bytes(GstAppSrc* appsrc, guint64 max) {
+    g_object_set(G_OBJECT(appsrc), "max-bytes", max, NULL);
+}
+
+void swift_gst_app_src_set_latency(GstAppSrc* appsrc, guint64 min, guint64 max) {
+    g_object_set(G_OBJECT(appsrc), "min-latency", (gint64)min, "max-latency", (gint64)max, NULL);
+}
+
+GstBuffer* swift_gst_buffer_new_wrapped_full(gconstpointer data, gsize size, GstClockTime pts, GstClockTime duration) {
+    GstBuffer* buffer = gst_buffer_new_allocate(NULL, size, NULL);
+    if (buffer) {
+        gst_buffer_fill(buffer, 0, data, size);
+        GST_BUFFER_PTS(buffer) = pts;
+        GST_BUFFER_DURATION(buffer) = duration;
+    }
+    return buffer;
+}

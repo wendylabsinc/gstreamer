@@ -87,6 +87,52 @@ GstBuffer* swift_gst_buffer_new_allocate(gsize size);
 /// Fill buffer with data
 gsize swift_gst_buffer_fill(GstBuffer* buffer, gsize offset, gconstpointer src, gsize size);
 
+// MARK: - Buffer Timestamps
+
+/// Get buffer presentation timestamp (PTS)
+GstClockTime swift_gst_buffer_get_pts(GstBuffer* buffer);
+
+/// Get buffer decode timestamp (DTS)
+GstClockTime swift_gst_buffer_get_dts(GstBuffer* buffer);
+
+/// Get buffer duration
+GstClockTime swift_gst_buffer_get_duration(GstBuffer* buffer);
+
+/// Set buffer presentation timestamp (PTS)
+void swift_gst_buffer_set_pts(GstBuffer* buffer, GstClockTime pts);
+
+/// Set buffer decode timestamp (DTS)
+void swift_gst_buffer_set_dts(GstBuffer* buffer, GstClockTime dts);
+
+/// Set buffer duration
+void swift_gst_buffer_set_duration(GstBuffer* buffer, GstClockTime duration);
+
+/// Check if clock time is valid (not GST_CLOCK_TIME_NONE)
+gboolean swift_gst_clock_time_is_valid(GstClockTime time);
+
+/// Get GST_CLOCK_TIME_NONE value
+GstClockTime swift_gst_clock_time_none(void);
+
+/// Get GST_SECOND value (nanoseconds per second)
+GstClockTime swift_gst_second(void);
+
+// MARK: - AppSrc additional functions
+
+/// Set appsrc format
+void swift_gst_app_src_set_format(GstAppSrc* appsrc, GstFormat format);
+
+/// Set appsrc is-live property
+void swift_gst_app_src_set_is_live(GstAppSrc* appsrc, gboolean is_live);
+
+/// Set appsrc max-bytes property
+void swift_gst_app_src_set_max_bytes(GstAppSrc* appsrc, guint64 max);
+
+/// Set appsrc min-latency property
+void swift_gst_app_src_set_latency(GstAppSrc* appsrc, guint64 min, guint64 max);
+
+/// Create a buffer with PTS and duration set
+GstBuffer* swift_gst_buffer_new_wrapped_full(gconstpointer data, gsize size, GstClockTime pts, GstClockTime duration);
+
 #ifdef __cplusplus
 }
 #endif

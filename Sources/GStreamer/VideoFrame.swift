@@ -20,6 +20,12 @@ import CGStreamerShim
 /// - ``height``
 /// - ``format``
 ///
+/// ### Timestamps
+///
+/// - ``pts``
+/// - ``dts``
+/// - ``duration``
+///
 /// ### Accessing Pixel Data
 ///
 /// - ``withMappedBytes(_:)``
@@ -62,6 +68,21 @@ import CGStreamerShim
 ///
 /// // The buffer is automatically unmapped when the closure returns
 /// ```
+///
+/// ## Timestamps
+///
+/// Each frame includes timing information for synchronization:
+///
+/// ```swift
+/// for await frame in sink.frames() {
+///     if let pts = frame.pts {
+///         print("Frame at \(Double(pts) / 1_000_000_000.0)s")
+///     }
+///     if let duration = frame.duration {
+///         print("Duration: \(Double(duration) / 1_000_000.0)ms")
+///     }
+/// }
+/// ```
 public struct VideoFrame: @unchecked Sendable {
     /// The width of the frame in pixels.
     public let width: Int
@@ -78,6 +99,51 @@ public struct VideoFrame: @unchecked Sendable {
     /// - `.i420`: YUV 4:2:0 planar
     /// - `.gray8`: 8-bit grayscale
     public let format: PixelFormat
+
+    /// The presentation timestamp (PTS) in nanoseconds.
+    ///
+    /// This indicates when the frame should be displayed. Returns `nil` if
+    /// the timestamp is not set (GST_CLOCK_TIME_NONE).
+    ///
+    /// ## Example
+    ///
+    /// ```swift
+    /// if let pts = frame.pts {
+    ///     let seconds = Double(pts) / 1_000_000_000.0
+    ///     print("Frame time: \(seconds)s")
+    /// }
+    /// ```
+    public var pts: UInt64? {
+        let value = swift_gst_buffer_get_pts(storage.buffer)
+        return swift_gst_clock_time_is_valid(value) != 0 ? value : nil
+    }
+
+    /// The decode timestamp (DTS) in nanoseconds.
+    ///
+    /// This indicates when the frame should be decoded. For most video formats,
+    /// DTS equals PTS. For formats with B-frames, DTS may differ.
+    /// Returns `nil` if not set.
+    public var dts: UInt64? {
+        let value = swift_gst_buffer_get_dts(storage.buffer)
+        return swift_gst_clock_time_is_valid(value) != 0 ? value : nil
+    }
+
+    /// The duration of the frame in nanoseconds.
+    ///
+    /// Returns `nil` if the duration is not set.
+    ///
+    /// ## Example
+    ///
+    /// ```swift
+    /// if let duration = frame.duration {
+    ///     let fps = 1_000_000_000.0 / Double(duration)
+    ///     print("Frame rate: \(fps) fps")
+    /// }
+    /// ```
+    public var duration: UInt64? {
+        let value = swift_gst_buffer_get_duration(storage.buffer)
+        return swift_gst_clock_time_is_valid(value) != 0 ? value : nil
+    }
 
     /// Storage class to manage the buffer lifecycle.
     private final class Storage: @unchecked Sendable {
