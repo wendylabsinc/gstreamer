@@ -1,6 +1,7 @@
 import CGStreamer
 import CGStreamerApp
 import CGStreamerShim
+import Synchronization
 
 /// A wrapper for GStreamer's appsink element for pulling video frames from a pipeline.
 ///
@@ -79,10 +80,13 @@ public final class AppSink: @unchecked Sendable {
         UnsafeMutableRawPointer(element.element).assumingMemoryBound(to: GstAppSink.self)
     }
 
-    /// Cached video info from caps.
-    private var cachedWidth: Int = 0
-    private var cachedHeight: Int = 0
-    private var cachedFormat: PixelFormat = .unknown("")
+    /// Cached video info from caps (thread-safe).
+    private struct VideoInfo: Sendable {
+        var width: Int = 0
+        var height: Int = 0
+        var format: PixelFormat = .unknown("")
+    }
+    private let cachedInfo = Mutex(VideoInfo())
 
     /// Create an AppSink from a pipeline by element name.
     ///
@@ -166,10 +170,13 @@ public final class AppSink: @unchecked Sendable {
                             continue
                         }
 
+                        // Get current cached info
+                        var info = self.cachedInfo.withLock { $0 }
+
                         // Parse video info from caps - always try until we have valid values
-                        if self.cachedWidth == 0 || self.cachedHeight == 0 {
+                        if info.width == 0 || info.height == 0 {
                             if let caps = swift_gst_sample_get_caps(UnsafeMutableRawPointer(sample)) {
-                                self.parseVideoInfo(from: caps)
+                                info = self.parseVideoInfo(from: caps)
                             }
                         }
 
@@ -178,9 +185,9 @@ public final class AppSink: @unchecked Sendable {
                         guard bufferSize > 0 else { continue }
 
                         // If we still don't have dimensions, try to infer from buffer size and format
-                        var width = self.cachedWidth
-                        var height = self.cachedHeight
-                        let format = self.cachedFormat
+                        var width = info.width
+                        var height = info.height
+                        let format = info.format
 
                         if width == 0 || height == 0 {
                             // Try to infer dimensions from buffer size
@@ -196,8 +203,10 @@ public final class AppSink: @unchecked Sendable {
                                         width = testWidth
                                         height = testHeight
                                         // Cache for subsequent frames
-                                        self.cachedWidth = width
-                                        self.cachedHeight = height
+                                        self.cachedInfo.withLock {
+                                            $0.width = width
+                                            $0.height = height
+                                        }
                                         break
                                     }
                                 }
@@ -233,28 +242,36 @@ public final class AppSink: @unchecked Sendable {
         }
     }
 
-    /// Parse video info from caps.
-    private func parseVideoInfo(from caps: UnsafeMutablePointer<GstCaps>) {
-        guard let capsString = swift_gst_caps_to_string(caps) else { return }
+    /// Parse video info from caps and update cache.
+    private func parseVideoInfo(from caps: UnsafeMutablePointer<GstCaps>) -> VideoInfo {
+        guard let capsString = swift_gst_caps_to_string(caps) else {
+            return cachedInfo.withLock { $0 }
+        }
         defer { g_free(capsString) }
 
         let string = String(cString: capsString)
         let components = string.split(separator: ",")
+
+        var info = VideoInfo()
 
         for component in components {
             let trimmed = component.trimmingCharacters(in: .whitespaces)
             if trimmed.hasPrefix("width=") {
                 // Handle both "width=320" and "width=(int)320"
                 let value = extractValue(from: String(trimmed.dropFirst(6)))
-                cachedWidth = Int(value) ?? 0
+                info.width = Int(value) ?? 0
             } else if trimmed.hasPrefix("height=") {
                 let value = extractValue(from: String(trimmed.dropFirst(7)))
-                cachedHeight = Int(value) ?? 0
+                info.height = Int(value) ?? 0
             } else if trimmed.hasPrefix("format=") {
                 let value = extractValue(from: String(trimmed.dropFirst(7)))
-                cachedFormat = PixelFormat(string: value)
+                info.format = PixelFormat(string: value)
             }
         }
+
+        // Update cache atomically
+        cachedInfo.withLock { $0 = info }
+        return info
     }
 
     /// Extract value from a GStreamer caps value that may have type annotation.

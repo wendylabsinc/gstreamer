@@ -110,14 +110,15 @@ extension VideoFrame {
 
     /// Copy packed pixel data to CVPixelBuffer.
     private func copyPackedData(from src: UnsafeRawBufferPointer, to buffer: CVPixelBuffer) {
-        guard let destBase = CVPixelBufferGetBaseAddress(buffer) else { return }
+        guard let destBase = CVPixelBufferGetBaseAddress(buffer),
+              let srcBase = src.baseAddress else { return }
 
         let destBytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
         let srcBytesPerRow = width * format.bytesPerPixel
 
         // Copy row by row to handle stride differences
         for y in 0..<height {
-            let srcRow = src.baseAddress!.advanced(by: y * srcBytesPerRow)
+            let srcRow = srcBase.advanced(by: y * srcBytesPerRow)
             let destRow = destBase.advanced(by: y * destBytesPerRow)
             memcpy(destRow, srcRow, srcBytesPerRow)
         }
@@ -136,6 +137,7 @@ extension VideoFrame {
             copyI420(from: src, to: buffer)
         default:
             // For other planar formats, copy plane by plane
+            guard let srcBase = src.baseAddress else { return }
             var srcOffset = 0
             for plane in 0..<planeCount {
                 guard let destBase = CVPixelBufferGetBaseAddressOfPlane(buffer, plane) else { continue }
@@ -143,7 +145,7 @@ extension VideoFrame {
                 let planeBytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(buffer, plane)
                 let planeBytes = planeHeight * planeBytesPerRow
 
-                let srcPlane = src.baseAddress!.advanced(by: srcOffset)
+                let srcPlane = srcBase.advanced(by: srcOffset)
                 memcpy(destBase, srcPlane, planeBytes)
                 srcOffset += planeBytes
             }
@@ -152,6 +154,8 @@ extension VideoFrame {
 
     /// Copy NV12 data to CVPixelBuffer.
     private func copyNV12(from src: UnsafeRawBufferPointer, to buffer: CVPixelBuffer) {
+        guard let srcBase = src.baseAddress else { return }
+
         // Y plane
         if let yDest = CVPixelBufferGetBaseAddressOfPlane(buffer, 0) {
             let yHeight = CVPixelBufferGetHeightOfPlane(buffer, 0)
@@ -159,7 +163,7 @@ extension VideoFrame {
             let srcYBytesPerRow = width
 
             for y in 0..<yHeight {
-                let srcRow = src.baseAddress!.advanced(by: y * srcYBytesPerRow)
+                let srcRow = srcBase.advanced(by: y * srcYBytesPerRow)
                 let destRow = yDest.advanced(by: y * yBytesPerRow)
                 memcpy(destRow, srcRow, srcYBytesPerRow)
             }
@@ -173,7 +177,7 @@ extension VideoFrame {
             let yPlaneSize = width * height
 
             for y in 0..<uvHeight {
-                let srcRow = src.baseAddress!.advanced(by: yPlaneSize + y * srcUVBytesPerRow)
+                let srcRow = srcBase.advanced(by: yPlaneSize + y * srcUVBytesPerRow)
                 let destRow = uvDest.advanced(by: y * uvBytesPerRow)
                 memcpy(destRow, srcRow, srcUVBytesPerRow)
             }
@@ -182,6 +186,8 @@ extension VideoFrame {
 
     /// Copy I420 data to CVPixelBuffer.
     private func copyI420(from src: UnsafeRawBufferPointer, to buffer: CVPixelBuffer) {
+        guard let srcBase = src.baseAddress else { return }
+
         let ySize = width * height
         let uvWidth = width / 2
         let uvHeight = height / 2
@@ -191,7 +197,7 @@ extension VideoFrame {
         if let yDest = CVPixelBufferGetBaseAddressOfPlane(buffer, 0) {
             let yBytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(buffer, 0)
             for y in 0..<height {
-                let srcRow = src.baseAddress!.advanced(by: y * width)
+                let srcRow = srcBase.advanced(by: y * width)
                 let destRow = yDest.advanced(by: y * yBytesPerRow)
                 memcpy(destRow, srcRow, width)
             }
@@ -201,7 +207,7 @@ extension VideoFrame {
         if let uDest = CVPixelBufferGetBaseAddressOfPlane(buffer, 1) {
             let uBytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(buffer, 1)
             for y in 0..<uvHeight {
-                let srcRow = src.baseAddress!.advanced(by: ySize + y * uvWidth)
+                let srcRow = srcBase.advanced(by: ySize + y * uvWidth)
                 let destRow = uDest.advanced(by: y * uBytesPerRow)
                 memcpy(destRow, srcRow, uvWidth)
             }
@@ -211,7 +217,7 @@ extension VideoFrame {
         if let vDest = CVPixelBufferGetBaseAddressOfPlane(buffer, 2) {
             let vBytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(buffer, 2)
             for y in 0..<uvHeight {
-                let srcRow = src.baseAddress!.advanced(by: ySize + uvSize + y * uvWidth)
+                let srcRow = srcBase.advanced(by: ySize + uvSize + y * uvWidth)
                 let destRow = vDest.advanced(by: y * vBytesPerRow)
                 memcpy(destRow, srcRow, uvWidth)
             }

@@ -1,6 +1,7 @@
 import CGStreamer
 import CGStreamerApp
 import CGStreamerShim
+import Synchronization
 
 /// A wrapper for GStreamer's appsink element for pulling audio buffers from a pipeline.
 ///
@@ -104,10 +105,13 @@ public final class AudioSink: @unchecked Sendable {
         UnsafeMutableRawPointer(element.element).assumingMemoryBound(to: GstAppSink.self)
     }
 
-    /// Cached audio info from caps.
-    private var cachedSampleRate: Int = 0
-    private var cachedChannels: Int = 0
-    private var cachedFormat: AudioFormat = .unknown("")
+    /// Cached audio info from caps (thread-safe).
+    private struct AudioInfo: Sendable {
+        var sampleRate: Int = 0
+        var channels: Int = 0
+        var format: AudioFormat = .unknown("")
+    }
+    private let cachedInfo = Mutex(AudioInfo())
 
     /// Create an AudioSink from a pipeline by element name.
     ///
@@ -169,10 +173,13 @@ public final class AudioSink: @unchecked Sendable {
                             continue
                         }
 
+                        // Get current cached info
+                        var info = self.cachedInfo.withLock { $0 }
+
                         // Parse audio info from caps
-                        if self.cachedSampleRate == 0 {
+                        if info.sampleRate == 0 {
                             if let caps = swift_gst_sample_get_caps(UnsafeMutableRawPointer(sample)) {
-                                self.parseAudioInfo(from: caps)
+                                info = self.parseAudioInfo(from: caps)
                             }
                         }
 
@@ -185,9 +192,9 @@ public final class AudioSink: @unchecked Sendable {
 
                         let audioBuffer = AudioBuffer(
                             buffer: buffer,
-                            sampleRate: self.cachedSampleRate,
-                            channels: self.cachedChannels,
-                            format: self.cachedFormat,
+                            sampleRate: info.sampleRate,
+                            channels: info.channels,
+                            format: info.format,
                             ownsReference: true
                         )
 
@@ -209,27 +216,35 @@ public final class AudioSink: @unchecked Sendable {
         }
     }
 
-    /// Parse audio info from caps.
-    private func parseAudioInfo(from caps: UnsafeMutablePointer<GstCaps>) {
-        guard let capsString = swift_gst_caps_to_string(caps) else { return }
+    /// Parse audio info from caps and update cache.
+    private func parseAudioInfo(from caps: UnsafeMutablePointer<GstCaps>) -> AudioInfo {
+        guard let capsString = swift_gst_caps_to_string(caps) else {
+            return cachedInfo.withLock { $0 }
+        }
         defer { g_free(capsString) }
 
         let string = String(cString: capsString)
         let components = string.split(separator: ",")
 
+        var info = AudioInfo()
+
         for component in components {
             let trimmed = component.trimmingCharacters(in: .whitespaces)
             if trimmed.hasPrefix("rate=") {
                 let value = extractValue(from: String(trimmed.dropFirst(5)))
-                cachedSampleRate = Int(value) ?? 0
+                info.sampleRate = Int(value) ?? 0
             } else if trimmed.hasPrefix("channels=") {
                 let value = extractValue(from: String(trimmed.dropFirst(9)))
-                cachedChannels = Int(value) ?? 0
+                info.channels = Int(value) ?? 0
             } else if trimmed.hasPrefix("format=") {
                 let value = extractValue(from: String(trimmed.dropFirst(7)))
-                cachedFormat = AudioFormat(string: value)
+                info.format = AudioFormat(string: value)
             }
         }
+
+        // Update cache atomically
+        cachedInfo.withLock { $0 = info }
+        return info
     }
 
     /// Extract value from a GStreamer caps value that may have type annotation.

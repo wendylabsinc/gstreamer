@@ -264,7 +264,9 @@ public final class Pipeline: @unchecked Sendable {
         if let existingBus = _bus {
             return existingBus
         }
-        let gstBus = swift_gst_element_get_bus(_element)!
+        guard let gstBus = swift_gst_element_get_bus(_element) else {
+            preconditionFailure("Pipeline must have a bus")
+        }
         let newBus = Bus(bus: gstBus)
         _bus = newBus
         return newBus

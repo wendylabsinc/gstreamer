@@ -1,5 +1,6 @@
 import CGStreamer
 import CGStreamerShim
+import Synchronization
 
 /// A helper for splitting a stream to multiple destinations.
 ///
@@ -80,8 +81,8 @@ public final class Tee: @unchecked Sendable {
     /// The tee element.
     public let element: Element
 
-    /// Tracks requested pads for cleanup.
-    private var requestedPads: [Pad] = []
+    /// Tracks requested pads for cleanup (thread-safe).
+    private let requestedPads = Mutex<[Pad]>([])
 
     /// Create a Tee wrapper from a pipeline by element name.
     ///
@@ -126,7 +127,7 @@ public final class Tee: @unchecked Sendable {
 
     /// The number of active branches.
     public var branchCount: Int {
-        requestedPads.count
+        requestedPads.withLock { $0.count }
     }
 
     /// Create a new branch to an element.
@@ -161,7 +162,7 @@ public final class Tee: @unchecked Sendable {
 
         let success = srcPad.link(to: sinkPad)
         if success {
-            requestedPads.append(srcPad)
+            requestedPads.withLock { $0.append(srcPad) }
         }
         return success
     }
@@ -170,16 +171,24 @@ public final class Tee: @unchecked Sendable {
     ///
     /// - Parameter index: The index of the branch to remove.
     public func removeBranch(at index: Int) {
-        guard index >= 0 && index < requestedPads.count else { return }
-        let pad = requestedPads.remove(at: index)
-        element.releasePad(pad)
+        let pad: Pad? = requestedPads.withLock { pads in
+            guard index >= 0 && index < pads.count else { return nil }
+            return pads.remove(at: index)
+        }
+        if let pad {
+            element.releasePad(pad)
+        }
     }
 
     /// Remove all branches.
     public func removeAllBranches() {
-        for pad in requestedPads {
+        let pads = requestedPads.withLock { pads in
+            let copy = pads
+            pads.removeAll()
+            return copy
+        }
+        for pad in pads {
             element.releasePad(pad)
         }
-        requestedPads.removeAll()
     }
 }
