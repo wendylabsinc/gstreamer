@@ -109,6 +109,97 @@ public final class AppSink: @unchecked Sendable {
         }
         self.element = element
     }
+    public struct Frames: AsyncSequence {
+        let sink: AppSink
+        
+        public struct AsyncIterator: AsyncIteratorProtocol {
+            let sink: AppSink
+
+            @concurrent
+            public func next() async throws -> VideoFrame? {
+                while !Task.isCancelled {
+                    // Try to pull a sample with 100ms timeout
+                    if let sample = swift_gst_app_sink_try_pull_sample(sink.appSink, 100_000_000) {
+                        defer { swift_gst_sample_unref(UnsafeMutableRawPointer(sample)) }
+
+                        // Get buffer from sample
+                        guard let buffer = swift_gst_sample_get_buffer(UnsafeMutableRawPointer(sample)) else {
+                            continue
+                        }
+
+                        // Get current cached info
+                        var info = sink.cachedInfo.withLock { $0 }
+
+                        // Parse video info from caps - always try until we have valid values
+                        if info.width == 0 || info.height == 0 {
+                            if let caps = swift_gst_sample_get_caps(UnsafeMutableRawPointer(sample)) {
+                                info = sink.parseVideoInfo(from: caps)
+                            }
+                        }
+
+                        // Get buffer size to validate
+                        let bufferSize = swift_gst_buffer_get_size(buffer)
+                        guard bufferSize > 0 else { continue }
+
+                        // If we still don't have dimensions, try to infer from buffer size and format
+                        var width = info.width
+                        var height = info.height
+                        let format = info.format
+
+                        if width == 0 || height == 0 {
+                            // Try to infer dimensions from buffer size
+                            let bytesPerPixel = format.bytesPerPixel
+                            if bytesPerPixel > 0 {
+                                let totalPixels = Int(bufferSize) / bytesPerPixel
+                                // Common aspect ratios to try
+                                let aspectRatios: [(Int, Int)] = [(16, 9), (4, 3), (1, 1)]
+                                for (w, h) in aspectRatios {
+                                    let testWidth = Int(sqrt(Double(totalPixels * w / h)))
+                                    let testHeight = totalPixels / testWidth
+                                    if testWidth * testHeight == totalPixels {
+                                        width = testWidth
+                                        height = testHeight
+                                        // Cache for subsequent frames
+                                        sink.cachedInfo.withLock {
+                                            $0.width = width
+                                            $0.height = height
+                                        }
+                                        break
+                                    }
+                                }
+                            }
+                        }
+
+                        // Ref the buffer so VideoFrame can own it
+                        _ = swift_gst_buffer_ref(buffer)
+
+                        let frame = VideoFrame(
+                            buffer: buffer,
+                            width: width,
+                            height: height,
+                            format: format,
+                            ownsReference: true
+                        )
+
+                        return frame
+                    }
+
+                    // Check for EOS
+                    if swift_gst_app_sink_is_eos(sink.appSink) != 0 {
+                        break
+                    }
+
+                    await Task.yield()
+                }
+                
+                return nil
+            }
+        }
+
+        public func makeAsyncIterator() -> AsyncIterator {
+            AsyncIterator(sink: sink)
+        }
+    }
 
     /// An async stream of video frames from this sink.
     ///
@@ -152,94 +243,8 @@ public final class AppSink: @unchecked Sendable {
     ///     // Process 1080p frames from Jetson camera
     /// }
     /// ```
-    public func frames() -> AsyncStream<VideoFrame> {
-        AsyncStream { continuation in
-            let task = Task.detached { [weak self] in
-                guard let self else {
-                    continuation.finish()
-                    return
-                }
-
-                while !Task.isCancelled {
-                    // Try to pull a sample with 100ms timeout
-                    if let sample = swift_gst_app_sink_try_pull_sample(self.appSink, 100_000_000) {
-                        defer { swift_gst_sample_unref(UnsafeMutableRawPointer(sample)) }
-
-                        // Get buffer from sample
-                        guard let buffer = swift_gst_sample_get_buffer(UnsafeMutableRawPointer(sample)) else {
-                            continue
-                        }
-
-                        // Get current cached info
-                        var info = self.cachedInfo.withLock { $0 }
-
-                        // Parse video info from caps - always try until we have valid values
-                        if info.width == 0 || info.height == 0 {
-                            if let caps = swift_gst_sample_get_caps(UnsafeMutableRawPointer(sample)) {
-                                info = self.parseVideoInfo(from: caps)
-                            }
-                        }
-
-                        // Get buffer size to validate
-                        let bufferSize = swift_gst_buffer_get_size(buffer)
-                        guard bufferSize > 0 else { continue }
-
-                        // If we still don't have dimensions, try to infer from buffer size and format
-                        var width = info.width
-                        var height = info.height
-                        let format = info.format
-
-                        if width == 0 || height == 0 {
-                            // Try to infer dimensions from buffer size
-                            let bytesPerPixel = format.bytesPerPixel
-                            if bytesPerPixel > 0 {
-                                let totalPixels = Int(bufferSize) / bytesPerPixel
-                                // Common aspect ratios to try
-                                let aspectRatios: [(Int, Int)] = [(16, 9), (4, 3), (1, 1)]
-                                for (w, h) in aspectRatios {
-                                    let testWidth = Int(sqrt(Double(totalPixels * w / h)))
-                                    let testHeight = totalPixels / testWidth
-                                    if testWidth * testHeight == totalPixels {
-                                        width = testWidth
-                                        height = testHeight
-                                        // Cache for subsequent frames
-                                        self.cachedInfo.withLock {
-                                            $0.width = width
-                                            $0.height = height
-                                        }
-                                        break
-                                    }
-                                }
-                            }
-                        }
-
-                        // Ref the buffer so VideoFrame can own it
-                        _ = swift_gst_buffer_ref(buffer)
-
-                        let frame = VideoFrame(
-                            buffer: buffer,
-                            width: width,
-                            height: height,
-                            format: format,
-                            ownsReference: true
-                        )
-
-                        continuation.yield(frame)
-                    }
-
-                    // Check for EOS
-                    if swift_gst_app_sink_is_eos(self.appSink) != 0 {
-                        break
-                    }
-                }
-
-                continuation.finish()
-            }
-
-            continuation.onTermination = { _ in
-                task.cancel()
-            }
-        }
+    public func frames() -> Frames {
+        Frames(sink: self)
     }
 
     /// Parse video info from caps and update cache.
