@@ -566,8 +566,8 @@ public final class Element: @unchecked Sendable {
                 description = ""
             }
             let flags = pspec.pointee.flags
-            let isReadable = (flags.rawValue & G_PARAM_READABLE.rawValue) != 0
-            let isWritable = (flags.rawValue & G_PARAM_WRITABLE.rawValue) != 0
+            let isReadable = (flags.rawValue & 1) != 0
+            let isWritable = (flags.rawValue & 2) != 0
 
             // Get default value
             var defaultValue: String? = nil
